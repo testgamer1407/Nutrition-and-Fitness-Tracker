@@ -1,2 +1,2 @@
 # Nutrition and Fitness Tracker
-Act like you are one of the most experienced coder in the world. U have to create an ap using streamlit, numpy and panda libraries . The topic for the aPP is Nutrition and Fitness Trackier . Make the app interactive and interesting to use
+Act like you are one of the most experienced coder in the world. U must use to create an app using streamlit, numpy and pandas libraries u can use other libraries also . The topic for the aPP is Nutrition and Fitness Tracker . Make the app interactive and interesting to use and make sure that the app providing the info is detailed and accurate and also create an option for downloading the report
