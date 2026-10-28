@@ -2,206 +2,212 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
+from io import BytesIO
 
-# --- APP CONFIGURATION ---
+# Set page configuration
 st.set_page_config(
-    page_title="Pulse & Plate | Fitness Tracker",
+    page_title="ProFit: Ultimate Nutrition & Fitness Tracker",
     page_icon="💪",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# --- CUSTOM STYLING ---
-st.markdown("""
-    <style>
-    .main-title { font-size: 42px; font-weight: 700; color: #FF4B4B; margin-bottom: 20px; }
-    .metric-card { background-color: #f0f2f6; padding: 15px; border-radius: 10px; text-align: center; }
-    </style>
-""", unsafe_allow_html=True)
+# Initialize Session State for data persistence
+if 'meals' not in st.session_state:
+    st.session_state.meals = pd.DataFrame(columns=['Meal Type', 'Food Item', 'Calories (kcal)', 'Protein (g)', 'Carbs (g)', 'Fats (g)'])
 
-# --- SESSION STATE INITIALIZATION ---
-# Using Pandas dataframes inside session state to persistently log data during the session
-if 'food_log' not in st.session_state:
-    st.session_state.food_log = pd.DataFrame(columns=['Time', 'Item', 'Calories (kcal)', 'Protein (g)', 'Carbs (g)', 'Fats (g)'])
+if 'workouts' not in st.session_state:
+    st.session_state.workouts = pd.DataFrame(columns=['Activity', 'Duration (min)', 'Intensity', 'Calories Burned (kcal)'])
 
-if 'workout_log' not in st.session_state:
-    st.session_state.workout_log = pd.DataFrame(columns=['Time', 'Activity', 'Duration (min)', 'Intensity', 'Calories Burned (kcal)'])
+if 'water' not in st.session_state:
+    st.session_state.water = 0.0
 
-# --- SIDEBAR: USER PROFILE & BIOMETRICS ---
-st.sidebar.header("👤 User Profile & Goals")
+# ----------------------------------------------------------------------------------
+# APP HEADER
+# ----------------------------------------------------------------------------------
+st.title("💪 ProFit: Personal Nutrition & Fitness Analytics")
+st.markdown("Track macros, log workouts, monitor your hydration, and export your performance metrics instantly.")
 
-name = st.sidebar.text_input("Name", value="Athlete")
-age = st.sidebar.number_input("Age", min_value=1, max_value=120, value=25)
+# ----------------------------------------------------------------------------------
+# SIDEBAR: METABOLIC CALCULATOR (BMR / TDEE)
+# ----------------------------------------------------------------------------------
+st.sidebar.header("👤 Profile & Metabolic Calculator")
 gender = st.sidebar.radio("Gender", ["Male", "Female"])
-weight = st.sidebar.number_input("Weight (kg)", min_value=10.0, max_value=300.0, value=70.0, step=0.1)
-height = st.sidebar.number_input("Height (cm)", min_value=50.0, max_value=250.0, value=175.0, step=0.1)
+age = st.sidebar.number_input("Age (years)", min_value=10, max_value=100, value=25)
+weight = st.sidebar.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=70.0)
+height = st.sidebar.number_input("Height (cm)", min_value=100.0, max_value=250.0, value=175.0)
 
 activity_level = st.sidebar.selectbox(
     "Activity Level",
-    ["Sedentary (Little to no exercise)", 
-     "Lightly Active (1-3 days/week)", 
-     "Moderately Active (3-5 days/week)", 
-     "Very Active (6-7 days/week)"]
+    [
+        "Sedentary (little or no exercise)",
+        "Lightly active (light exercise 1-3 days/week)",
+        "Moderately active (moderate exercise 3-5 days/week)",
+        "Very active (hard exercise 6-7 days/week)"
+    ]
 )
 
-# --- ALGORITHMIC CALCULATIONS (Numpy & Math) ---
-# BMI Calculation: weight (kg) / height (m)^2
-bmi = np.round(weight / ((height / 100) ** 2), 1)
-
-# BMR Calculation via Harris-Benedict Equation
+# Calculate BMR using the Mifflin-St Jeor Equation
 if gender == "Male":
-    bmr = 88.362 + (13.397 * weight) + (4.799 * height) - (5.677 * age)
+    bmr = 10 * weight + 6.25 * height - 5 * age + 5
 else:
-    bmr = 447.593 + (9.247 * weight) + (3.098 * height) - (4.330 * age)
+    bmr = 10 * weight + 6.25 * height - 5 * age - 161
 
-# Activity multipliers using Numpy conditional arrays
-multipliers = [1.2, 1.375, 1.55, 1.725]
-levels = ["Sedentary (Little to no exercise)", "Lightly Active (1-3 days/week)", "Moderately Active (3-5 days/week)", "Very Active (6-7 days/week)"]
-chosen_multiplier = np.select([activity_level == lvl for lvl in levels], multipliers, default=1.2)
-tdee = np.round(bmr * chosen_multiplier, 0)
+# Map activity multipliers using numpy arrays for processing efficiency
+multipliers = np.array([1.2, 1.375, 1.55, 1.725])
+activity_idx = ["Sedentary", "Lightly", "Moderately", "Very"].index(activity_level.split()[0])
+tdee = int(bmr * multipliers[activity_idx])
 
-# --- MAIN INTERFACE ---
-st.markdown(f"<div class='main-title'>⚡ Pulse & Plate</div>", unsafe_allow_html=True)
-st.subheader(f"Welcome back, {name}! tracking your journey to peak health.")
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 Daily Target Goals")
+target_calories = st.sidebar.number_input("Target Calorie Intake (kcal)", value=tdee, step=50)
+target_water = st.sidebar.number_input("Target Water Intake (Liters)", value=3.0, step=0.5)
 
-# --- ROW 1: BIOMETRIC DASHBOARD ---
-st.markdown("### 📊 Today's Baseline Biometrics")
-col1, col2, col3, col4 = st.columns(4)
+# ----------------------------------------------------------------------------------
+# MAIN DASHBOARD: 3-COLUMN LAYOUT FOR ENTRY
+# ----------------------------------------------------------------------------------
+col1, col2, col3 = st.columns(3)
 
+# Column 1: Nutrition Logging
 with col1:
-    st.metric(label="BMI Score", value=bmi, delta="Healthy" if 18.5 <= bmi <= 24.9 else "Out of Range", delta_color="normal" if 18.5 <= bmi <= 24.9 else "inverse")
+    st.header("🍳 Log Nutrition")
+    with st.form("nutrition_form", clear_on_submit=True):
+        meal_type = st.selectbox("Meal Category", ["Breakfast", "Lunch", "Dinner", "Snack"])
+        food_item = st.text_input("Food Item Name", placeholder="e.g., Grilled Chicken Rice Bowl")
+        calories = st.number_input("Calories (kcal)", min_value=0, value=0)
+        protein = st.number_input("Protein (g)", min_value=0.0, value=0.0, step=1.0)
+        carbs = st.number_input("Carbs (g)", min_value=0.0, value=0.0, step=1.0)
+        fats = st.number_input("Fats (g)", min_value=0.0, value=0.0, step=1.0)
+        
+        submitted_meal = st.form_submit_submit = st.form_submit_button("Add Food Item")
+        if submitted_meal and food_item != "":
+            new_meal = pd.DataFrame([[meal_type, food_item, calories, protein, carbs, fats]], columns=st.session_state.meals.columns)
+            st.session_state.meals = pd.concat([st.session_state.meals, new_meal], ignore_index=True)
+            st.success(f"Added {food_item} successfully!")
+
+# Column 2: Workout Logging
 with col2:
-    st.metric(label="Basal Metabolic Rate (BMR)", value=f"{int(bmr)} kcal")
+    st.header("🏃‍♂️ Log Exercise")
+    with st.form("workout_form", clear_on_submit=True):
+        activity = st.text_input("Activity / Exercise", placeholder="e.g., Running, Weightlifting")
+        duration = st.number_input("Duration (minutes)", min_value=1, value=30)
+        intensity = st.selectbox("Intensity Level", ["Low", "Moderate", "High"])
+        
+        # Estimate calorie burn using an analytical MET estimate array
+        met_multiplier = {"Low": 3.5, "Moderate": 7.0, "High": 10.5}[intensity]
+        calc_burned = int((met_multiplier * 3.5 * weight / 200) * duration)
+        
+        custom_burn = st.number_input("Estimated Calories Burned (Leave 0 to auto-calculate)", min_value=0, value=0)
+        final_burn = custom_burn if custom_burn > 0 else calc_burned
+        
+        submitted_workout = st.form_submit_button("Add Activity Log")
+        if submitted_workout and activity != "":
+            new_workout = pd.DataFrame([[activity, duration, intensity, final_burn]], columns=st.session_state.workouts.columns)
+            st.session_state.workouts = pd.concat([st.session_state.workouts, new_workout], ignore_index=True)
+            st.success(f"Log updated: {activity} saved!")
+
+# Column 3: Hydration Metrics
 with col3:
-    st.metric(label="Daily Energy Expenditure (TDEE)", value=f"{int(tdee)} kcal")
-with col4:
-    # Calculate balance dynamically using Pandas columns
-    total_consumed = st.session_state.food_log['Calories (kcal)'].sum()
-    total_burned = st.session_state.workout_log['Calories Burned (kcal)'].sum()
-    net_calories = total_consumed - total_burned
-    st.metric(label="Net Calories Today", value=f"{int(net_calories)} kcal", delta=f"{int(net_calories - tdee)} vs Budget")
+    st.header("💧 Tracker Hydration")
+    st.write(f"**Current Intake:** {st.session_state.water:.2f} L / {target_water:.2f} L")
+    
+    water_progress = min(st.session_state.water / max(target_water, 1.0), 1.0)
+    st.progress(water_progress)
+    
+    h_col1, h_col2 = st.columns(2)
+    with h_col1:
+        if st.button("➕ Add 250ml (0.25L)"):
+            st.session_state.water += 0.25
+            st.rerun()
+    with h_col2:
+        if st.button("➕ Add 500ml (0.50L)"):
+            st.session_state.water += 0.50
+            st.rerun()
+            
+    if st.button("🔄 Reset Hydration Counter"):
+        st.session_state.water = 0.0
+        st.rerun()
 
+# ----------------------------------------------------------------------------------
+# VISUAL ANALYTICS ENGINE & MACRO BREAKDOWNS
+# ----------------------------------------------------------------------------------
 st.markdown("---")
+st.header("📊 Today's Aggregated Analytics Summary")
 
-# --- ROW 2: INTERACTIVE LOGGING ENGINES ---
-tab1, tab2, tab3 = st.tabs(["🍏 Nutrition Tracker", "🏋️ Fitness & Workouts", "📈 Summary Analytics"])
+# Data processing using pandas and numpy vectors
+total_calories_consumed = int(st.session_state.meals['Calories (kcal)'].sum())
+total_protein = np.round(st.session_state.meals['Protein (g)'].sum(), 1)
+total_carbs = np.round(st.session_state.meals['Carbs (g)'].sum(), 1)
+total_fats = np.round(st.session_state.meals['Fats (g)'].sum(), 1)
+total_calories_burned = int(st.session_state.workouts['Calories Burned (kcal)'].sum())
 
-with tab1:
-    st.subheader("Log Meal & Macronutrients")
-    c1, c2, c3 = st.columns([2, 1, 1])
-    
-    with c1:
-        food_item = st.text_input("What did you eat?", placeholder="e.g., Grilled Chicken Salad")
-    with c2:
-        meal_time = st.time_input("Time of Meal", datetime.time(12, 0))
-    with c3:
-        cal_input = st.number_input("Calories (kcal)", min_value=0, value=350, step=10)
-        
-    p_col, c_col, f_col = st.columns(3)
-    with p_col:
-        protein = st.number_input("Protein (g)", min_value=0.0, value=25.0, step=1.0)
-    with c_col:
-        carbs = st.number_input("Carbs (g)", min_value=0.0, value=30.0, step=1.0)
-    with f_col:
-        fats = st.number_input("Fats (g)", min_value=0.0, value=10.0, step=1.0)
-        
-    if st.button("➕ Add Food Entry", type="primary"):
-        new_food = pd.DataFrame([{
-            'Time': meal_time.strftime("%H:%M"),
-            'Item': food_item if food_item else "Unspecified Meal",
-            'Calories (kcal)': cal_input,
-            'Protein (g)': protein,
-            'Carbs (g)': carbs,
-            'Fats (g)': fats
+net_calories = total_calories_consumed - total_calories_burned
+
+# Dynamic KPI Cards
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1.metric("Calories Consumed", f"{total_calories_consumed} kcal", f"Goal: {target_calories} kcal")
+kpi2.metric("Calories Burned", f"{total_calories_burned} kcal")
+kpi3.metric("Net Energy Balance", f"{net_calories} kcal", delta=f"{net_calories - target_calories} vs Goal", delta_color="inverse")
+kpi4.metric("Hydration Total", f"{st.session_state.water:.2f} L", f"Goal: {target_water:.2f} L")
+
+# Display Active Sub-Tables
+view1, view2 = st.columns(2)
+with view1:
+    st.subheader("🍽️ Meal Logs")
+    if not st.session_state.meals.empty:
+        st.dataframe(st.session_state.meals, use_container_width=True)
+    else:
+        st.info("No meals logged yet today.")
+
+with view2:
+    st.subheader("🏋️ Workout History Log")
+    if not st.session_state.workouts.empty:
+        st.dataframe(st.session_state.workouts, use_container_width=True)
+    else:
+        st.info("No workouts registered yet today.")
+
+# Macro Chart Representation (Bar chart layout calculated via pandas series transformations)
+if total_protein > 0 or total_carbs > 0 or total_fats > 0:
+    st.subheader("🍗 Macronutrient Gram Split Distribution")
+    macro_df = pd.DataFrame({
+        'Macro': ['Protein (g)', 'Carbohydrates (g)', 'Fats (g)'],
+        'Grams': [total_protein, total_carbs, total_fats]
+    }).set_index('Macro')
+    st.bar_chart(macro_df)
+
+# ----------------------------------------------------------------------------------
+# REPORT COMPILATION & GENERATION FOR EXPORT
+# ----------------------------------------------------------------------------------
+st.markdown("---")
+st.header("📋 Export Metric Report")
+
+def generate_csv_report():
+    # Construct unified plain-text summary and stack underlying DataFrames
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        # Sheet 1: High Level Summary Overview
+        summary_df = pd.DataFrame([{
+            "Report Date": datetime.date.today(),
+            "Calculated BMR (kcal)": bmr,
+            "TDEE Base Baseline": tdee,
+            "Target Calories Set": target_calories,
+            "Total Consumed": total_calories_consumed,
+            "Total Burned": total_calories_burned,
+            "Net Energy Balance": net_calories,
+            "Water Intake (L)": st.session_state.water
         }])
-        # Append data to the stateful DataFrame
-        st.session_state.food_log = pd.concat([st.session_state.food_log, new_food], ignore_index=True)
-        st.success(f"Logged {food_item} successfully!")
-        st.rerun()
+        summary_df.to_excel(writer, sheet_name="Daily Summary", index=False)
+        st.session_state.meals.to_excel(writer, sheet_name="Diet Log", index=False)
+        st.session_state.workouts.to_excel(writer, sheet_name="Workout Log", index=False)
+    return buffer.getvalue()
 
-    # Dynamic Data Display
-    st.markdown("#### Today's Intake History")
-    if not st.session_state.food_log.empty:
-        st.dataframe(st.session_state.food_log, use_container_width=True)
-        if st.button("🗑️ Clear Food Log"):
-            st.session_state.food_log = pd.DataFrame(columns=['Time', 'Item', 'Calories (kcal)', 'Protein (g)', 'Carbs (g)', 'Fats (g)'])
-            st.rerun()
-    else:
-        st.info("No food logged yet today. Feed your body!")
-
-with tab2:
-    st.subheader("Log Physical Activity")
-    wc1, wc2, wc3 = st.columns([2, 1, 1])
-    
-    with wc1:
-        activity = st.selectbox("Workout Type", ["Running", "Weightlifting", "Cycling", "Swimming", "Yoga", "Walking", "Other HIIT"])
-    with wc2:
-        duration = st.number_input("Duration (minutes)", min_value=1, value=30, step=5)
-    with wc3:
-        intensity = st.select_slider("Intensity Level", options=["Low", "Medium", "High"])
-        
-    # Algorithmic calorie estimation per minute based on intensity using Numpy maps
-    intensity_multiplier = np.select([intensity == "Low", intensity == "Medium", intensity == "High"], [5, 8, 12.5])
-    estimated_burn = np.round(duration * intensity_multiplier, 0)
-    
-    st.info(f"🔥 Estimated energy burn for this session: **{int(estimated_burn)} kcal**")
-    
-    if st.button("🏋️ Record Session", type="primary"):
-        new_workout = pd.DataFrame([{
-            'Time': datetime.datetime.now().strftime("%H:%M"),
-            'Activity': activity,
-            'Duration (min)': duration,
-            'Intensity': intensity,
-            'Calories Burned (kcal)': estimated_burn
-        }])
-        st.session_state.workout_log = pd.concat([st.session_state.workout_log, new_workout], ignore_index=True)
-        st.success(f"Recorded your {activity} session!")
-        st.rerun()
-        
-    st.markdown("#### Today's Workout History")
-    if not st.session_state.workout_log.empty:
-        st.dataframe(st.session_state.workout_log, use_container_width=True)
-        if st.button("🗑️ Clear Workout Log"):
-            st.session_state.workout_log = pd.DataFrame(columns=['Time', 'Activity', 'Duration (min)', 'Intensity', 'Calories Burned (kcal)'])
-            st.rerun()
-    else:
-        st.info("No workouts recorded yet. Let's get moving!")
-
-with tab3:
-    st.subheader("📊 Performance Analytics")
-    
-    if not st.session_state.food_log.empty or not st.session_state.workout_log.empty:
-        col_metrics_1, col_metrics_2 = st.columns(2)
-        
-        with col_metrics_1:
-            st.markdown("#### Macronutrient Distribution Breakdown")
-            total_p = st.session_state.food_log['Protein (g)'].sum()
-            total_c = st.session_state.food_log['Carbs (g)'].sum()
-            total_f = st.session_state.food_log['Fats (g)'].sum()
-            
-            # Formulate macro metrics chart via Pandas
-            macro_df = pd.DataFrame({
-                'Macronutrient': ['Protein', 'Carbs', 'Fats'],
-                'Grams Consumed': [total_p, total_c, total_f]
-            })
-            st.bar_chart(data=macro_df, x='Macronutrient', y='Grams Consumed', color="#FF4B4B")
-            
-        with col_metrics_2:
-            st.markdown("#### Calorie Budget Tracking")
-            cal_summary = pd.DataFrame({
-                'Metric': ['Target TDEE', 'Consumed', 'Burned'],
-                'Calories (kcal)': [tdee, total_consumed, total_burned]
-            })
-            st.bar_chart(data=cal_summary, x='Metric', y='Calories (kcal)', color="#29B5E8")
-            
-        # Target suggestions engine
-        st.markdown("#### 💡 AI Architecture Recommendations")
-        if total_consumed > tdee:
-            st.warning("⚠️ You are currently in a caloric surplus. Ideal for muscle building, but reduce intake slightly if your goal is fat loss.")
-        elif total_consumed < bmr and total_consumed > 0:
-            st.error("🚨 Warning: Your caloric intake is below your basic BMR. Ensure you consume enough energy to power vital organ functions safely.")
-        else:
-            st.success("💪 Exceptional work! Your caloric balance is tracking within optimized ranges for sustainable metabolic health.")
-    else:
-        st.info("Log your meals and movements in the previous tabs to activate deep analytics reporting.")
-
+st.write("Generate and download your structural data log mapping out all current records.")
+try:
+    report_data = generate_csv_report()
+    st.download_button(
+        label="📥 Download Comprehensive Excel Report",
+        data=report_data,
+        file_name=f"Fitness_Nutrition_Report_{datetime.date.today()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+except Exception as e:
+    st.warning("Ensure all fields or structural elements are ready before clicking download.")
